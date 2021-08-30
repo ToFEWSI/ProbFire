@@ -1,7 +1,15 @@
+"""
+@author: Tadas Nikonovas
+helper functions, part of:
+ProbFire, a probabilistic fire early warning system for
+Indonesia.
+"""
+
 import numpy as np
 import xarray as xr
 import pandas as pd
 
+#Define sub-region bounding boxes
 bboxes = {
         'South Kalimantan': [-1.5, 110.5, -4., 115],
         'South Sumatra': [-2.2, 103, -5, 106.2],
@@ -28,20 +36,6 @@ def spatial_subset_dfr(dfr, bbox):
                             (dfr['longitude'] < bbox[3])]
     return dfr
 
-def dist_on_earth(dlon, dlat, lat1, lat2):
-        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-        c = 2 * np.arcsin(np.sqrt(a))
-        kmeters = 6371 * c
-        return kmeters
-
-def to_day_since(dtime_string):
-    """
-    Method returning day since the self base date. Takes string datetime in
-    YYYY-MM-DD format.
-    """
-    dtime = pd.to_datetime(dtime_string, format='%Y-%m-%d')
-    return (dtime - self.basedate).days
-
 def lat_lon_grid_points(bbox, step):
     """
     Returns two lists with latitude and longitude grid cell center coordinates
@@ -61,10 +55,6 @@ def lat_lon_grid_points(bbox, step):
 
 class Gridder(object):
     def __init__(self, lats=None, lons=None, bbox=None, step=None):
-        self.bboxes = {'indonesia': [8.0, 93.0, -13.0, 143.0],
-                       'riau': [3, 99, -2, 104],
-                       'canada': [83, -141, 41.67, -52.6],
-                       'canada_usa': [83, -171.8, 20.67, -52.6]}
         if all(cord is not None for cord in [lats, lons]):
             self.lats, self.lons = lats, lons
             self.step = self.grid_step()
@@ -126,6 +116,10 @@ class Gridder(object):
         return dfr
 
     def add_coords_from_ind(self, dfr):
+        """
+        Add longitude and latitude columns to the input dfr
+        based on lonind and latind columns
+        """
         dfr['longitude'] = self.lons[dfr.lonind]
         dfr['latitude'] = self.lats[dfr.latind]
         return dfr
@@ -167,119 +161,6 @@ class Gridder(object):
                                 (dfr['latind'] >= sbox[0].min())]
         dfr = dfr[(dfr['lonind'] >= ebox[0].min()) &
                                 (dfr['lonind'] <= ebox[0].max())]
-        return dfr
-
-
-    def primary_to_grid(self, dfr):
-        dfr = self.add_grid_inds(dfr)
-        grouped = dfr.groupby(['lonind', 'latind', 'primary']).size().unstack(fill_value = 0)
-        grouped.loc[:, 'total'] = grouped.sum(axis = 1)
-        classes = grouped.columns.values
-        print(classes)
-        grouped.reset_index(inplace = True)
-        dss = []
-        for item in classes:
-            print(item)
-            gridded = self.dfr_to_grid(grouped[['lonind', 'latind', item]], item)
-            dataset = xr.Dataset({str(item): (['latitude', 'longitude'], np.flipud(gridded))},
-                                  coords={'latitude': self.lats,
-                                         'longitude': self.lons})
-            dss.append(dataset)
-        return xr.merge(dss)
-
-
-    def lulc_to_grid(self, dfr):
-        dfr = self.add_grid_inds(dfr)
-        grouped = dfr.groupby(['lonind', 'latind', 'lulc']).size().unstack(fill_value = 0)
-        grouped.loc[:, 'total'] = grouped.sum(axis = 1)
-        classes = grouped.columns.values
-        print(classes)
-        grouped.reset_index(inplace = true)
-        dss = []
-        for item in classes:
-            print(item)
-            gridded = self.dfr_to_grid(grouped[['lonind', 'latind', item]], item)
-            dataset = xr.Dataset({str(item): (['latitude', 'longitude'], np.flipud(gridded))},
-                                  coords={'latitude': self.lats,
-                                         'longitude': self.lons})
-            dss.append(dataset)
-        return xr.merge(dss)
-
-    def grid_array_to_dataset(self, grid_array, name):
-        dataset = xr.Dataset({str(name): (['latitude', 'longitude'], np.flipud(grid_array))},
-                              coords={'latitude': self.lats,
-                                     'longitude': self.lons})
-        return dataset
-
-    def dfr_to_dataset(self, dfr, name, no_value):
-        gridded = self.dfr_to_grid(dfr, name, no_value)
-        dataset = self.grid_array_to_dataset(gridded, name)
-        return dataset
-
-    def to_grid(self, dfr):
-        dfr = self.add_grid_inds(dfr)
-        grouped = pd.DataFrame({'count' : dfr.groupby(['lonind', 'latind']).size()}).reset_index()
-        gridded = self.dfr_to_grid(grouped, 'count', np.nan)
-        return gridded
-
-    def dfr_to_grid(self, dfr, column, no_value):
-        gridded = np.empty((self.lats.shape[0],
-                         self.lons.shape[0]))
-        gridded[:, :] = no_value
-        latinds = dfr['latind'].values.astype(int)
-        loninds = dfr['lonind'].values.astype(int)
-        gridded[latinds, loninds] = dfr[column]
-        gridded = np.flipud(gridded)
-        return gridded
-
-    def to_xarray(self, data, var_name, timestamps):
-        lats = np.arange((-90 + self.step / 2.), 90., self.step)[::-1]
-        lons = np.arange((-180 + self.step / 2.), 180., self.step)
-        dataset = xr.Dataset({var_name: (['latitude', 'longitude', 'date'], data)},
-                              coords={'latitude': lats,
-                                     'longitude': lons,
-                                     'date': timestamps})
-        return dataset
-
-    def grid_dfr(self, dfr):
-        dates = pd.date_range(dfr.date.min(), dfr.date.max(), freq='D')
-        lonind, latind = self.binning(dfr['longitude'].values, dfr['latitude'].values)
-        dfr.loc[:, 'lonind'] = lonind
-        dfr.loc[:, 'latind'] = latind
-        dfa = pd.DataFrame({'count': dfr.groupby(['date', 'latind', 'lonind']).size()})
-        dfa = dfa.reset_index()
-        dfa.loc[:, 'dind'] = (dfa.date - dfa.date.min()).dt.days
-        grids = np.zeros((self.lats.shape[0], self.lons.shape[0], dfa.dind.max() + 1),
-                         dtype = int)
-        grids[dfa.latind, dfa.lonind, dfa.dind] = dfa['count'].astype(int)
-        grids = np.flip(grids, axis = 0)
-        dataset = xr.Dataset({'count': (['latitude', 'longitude', 'time'], grids)},
-                              coords={'latitude': self.lats,
-                                      'longitude': self.lons,
-                                      'time': dates})
-        return dataset
-
-
-    def grid_centroids(self, years, dfr_list, distance):
-            dsy = []
-            for nr, dur in enumerate(['2', '4', '8', '16']):
-                dfr = dfr_list[nr]
-                gr_year = dfr[dfr.year == year]
-                grouped_days = gr_year.groupby('date')
-                grids = [self.to_grid(x[1]) for x in grouped_days]
-                timestamps = [x[0] for x in grouped_days]
-                netcdf_store = self.to_xarray(np.dstack(grids), 'ign_agg_{0}'.format(dur), timestamps)
-                dsy.append(netcdf_store)
-            dsa = xr.merge(dsy)
-            dsa.to_netcdf('/mnt/data/frp/ignitions_tropics_{0}_{1}_frp.nc'.format(year, distance),
-                          encoding={'ign_agg_2': {'dtype': 'int16', 'zlib': True},
-                                    'ign_agg_4': {'dtype': 'int16', 'zlib': True},
-                                    'ign_agg_8': {'dtype': 'int16', 'zlib': True},
-                                    'ign_agg_16': {'dtype': 'int16', 'zlib': True}})
-
-    def add_coords_from_ind(self, dfr):
-        dfr['longitude'] = self.lons[dfr.lonind]
-        dfr['latitude'] = self.lats[dfr.latind]
         return dfr
 
 if __name__ == '__main__':
